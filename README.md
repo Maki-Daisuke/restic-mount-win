@@ -11,14 +11,14 @@ A standalone CLI tool to natively mount [restic](https://github.com/restic/resti
 The upstream restic mount implementation relies on Linux/macOS FUSE (Filesystem in Userspace) via `anacrolix/fuse`.
 On Linux, interacting with the `/dev/fuse` character device to exchange byte streams allows mounting using standard system calls without requiring CGO (an external C compiler).
 
-Windows, on the other hand, lacks a native FUSE interface. Implementing a user-mode filesystem on Windows requires interfacing with a kernel driver like **WinFsp** (Windows File System Proxy) through C APIs (DLLs). This fundamentally requires CGO (e.g., MinGW-w64).
+Windows, on the other hand, lacks a native FUSE interface. This project uses **WinFsp** (Windows File System Proxy) as the kernel driver and the Windows no-CGO implementation of **cgofuse** to load the WinFsp DLL dynamically. This preserves a pure Go build with `CGO_ENABLED=0`; WinFsp is required at runtime, but a C compiler and WinFsp headers are not required to build the executable.
 
 ### 2. Why a standalone tool instead of merging into upstream?
 
 A core design principle of restic is **"a single static binary that anyone can cross-compile anywhere with `CGO_ENABLED=0`"**—an exceptionally sound and pragmatic engineering decision.
-Adding Windows mount capabilities directly to the official binary would force a C toolchain (CGO) dependency exclusively for Windows builds. This would complicate build pipelines, undermine cross-compilation simplicity, and significantly increase maintenance overhead—the primary reason Windows support has not been merged upstream for years.
+Although cgofuse can provide Windows mounting without CGO, adding it to restic would still introduce a Windows-only filesystem implementation, a WinFsp runtime dependency, platform-specific behavior, and additional release and integration testing.
 
-Therefore, this project respects upstream's philosophy: rather than compromising that design, it isolates the Windows-specific mounting functionality into a dedicated external command (`restic-mount.exe`) without polluting the upstream codebase.
+Therefore, this project keeps the Windows-specific mounting functionality in a dedicated external command (`restic-mount.exe`) while retaining restic's no-CGO build model.
 
 ### 3. Module structure and bypassing Go's `internal` restriction
 
@@ -107,14 +107,12 @@ Press `Ctrl + C` in the running terminal, or eject the drive directly from File 
 
 ## Development
 
-Building the project requires **Go**, **MinGW-w64** (for CGO), and the **[Task](https://taskfile.dev/)** task runner.
+Building the project requires **Go** and the **[Task](https://taskfile.dev/)** task runner. The build uses `CGO_ENABLED=0`, so MinGW-w64 and WinFsp development headers are not required.
 
 ### 1. Tool Setup
 
 ```powershell
 winget install Task.Task
-# If you don't have MinGW-w64 (e.g., via MSYS2 or w64devkit)
-winget install skeeto.w64devkit
 ```
 
 ### 2. Clone the Repository
@@ -128,7 +126,7 @@ cd restic-mount
 
 ### 3. Build
 
-`Taskfile.yml` automatically verifies/creates the directory junction, enables CGO, and outputs the binary.
+`Taskfile.yml` automatically verifies/creates the directory junction, disables CGO, and outputs the binary.
 
 ```powershell
 # Build binary (outputs to bin/restic-mount.exe)
