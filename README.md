@@ -52,12 +52,36 @@ Because the junction makes `cmd/restic-mount` part of the **restic module** (nea
 - The build runs `go build -modfile=../restic-mount.mod` from inside `restic/`, so module resolution uses our alternate file while the module root and import paths remain restic's.
 - `Taskfile.yml` includes a sync check that fails the build if `restic-mount.mod` has drifted from `restic/go.mod` beyond the expected cgofuse `require` line (e.g., after a submodule bump).
 
+### 5. Runtime behavior: overlap rejection and repository locking
+
+To stay consistent with the upstream `restic mount` command, this tool adopts the same two safety behaviors:
+
+**Repository / mount point overlap rejection** (upstream `validateMountpoint` / `checkMountpointOverlap`, GH #5234):
+
+- When the backend is a `local` path, the tool refuses to mount if the mount point and the repository directory are identical, or if either is nested inside the other. Mounting over the repository would make the FUSE server read its own backend files through the mount it just created, deadlocking the kernel.
+- Paths are resolved with `filepath.EvalSymlinks` before the prefix comparison, so symlinked mount points are detected too.
+- Error messages mirror upstream, e.g.:
+  - `mountpoint <mp> is the local repository directory; refusing to mount to avoid deadlocking the FUSE server`
+  - `mountpoint <mp> is inside the local repository directory <rp>; ...`
+  - `local repository directory <rp> is inside the mountpoint <mp>; ...`
+- Non-local backends (S3, REST, SFTP, ...) are not subject to this check, same as upstream.
+
+**Repository locking** (upstream `openWithReadLock`):
+
+- On mount, the tool acquires a **non-exclusive (shared) repository lock** via `repository.LockRepo(ctx, repo, false, ...)` and holds it for the lifetime of the mount, releasing it on `Ctrl + C` or unmount.
+- Consequences, identical to upstream:
+  - Multiple concurrent mounts of the same repository are allowed (shared locks coexist).
+  - Read-only commands (`restic ls`, `restic cat`, ...) can run in parallel with an active mount.
+  - Commands requiring an **exclusive** lock (`restic add`, `restic forget`, `restic check` with writes, ...) are blocked while the mount is active.
+- A `--no-lock` flag is provided, matching upstream's behavior of skipping lock acquisition entirely.
+
 ---
 
 ## Features
 
 - **Read-Only Mount**: Optimized for browsing backup contents, previewing files in File Explorer, and restoring individual files.
 - **WinFsp + cgofuse**: High compatibility with Windows File Explorer powered by a stable virtual filesystem framework.
+- **Safe by default**: Refuses to mount over the local repository (deadlock prevention) and holds a shared repository lock while mounted, matching upstream `restic mount` semantics.
 - **winget Support**: Automatically resolves the required WinFsp driver as a dependency.
 
 ---
