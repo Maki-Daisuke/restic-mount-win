@@ -75,6 +75,43 @@ To stay consistent with the upstream `restic mount` command, this tool adopts th
   - Commands requiring an **exclusive** lock (`restic add`, `restic forget`, `restic check` with writes, ...) are blocked while the mount is active.
 - A `--no-lock` flag is provided, matching upstream's behavior of skipping lock acquisition entirely.
 
+### 6. Windows filename projection: the "refuse" strategy
+
+Restic repositories store POSIX path components, which may be invalid on Windows (reserved device names such as `CON`, `NUL`, `AUX`, `PRN`, `COM1`–`COM9`, `LPT1`–`LPT9`; forbidden characters `\ / : * ? " < > |`; trailing dots or spaces; names exceeding 255 characters).
+
+This tool adopts the **refuse** strategy, following the precedent of Git's `core.protectNTFS` (which refuses to check out paths that would conflict with NTFS):
+
+- **`Readdir`**: directory listings **omit** entries whose names are invalid on Windows (with a one-time warning on the console, see below). The directory remains browsable; only the problematic entries are hidden.
+- **`Lookup` / `Open`**: explicitly requesting an invalid name (e.g., via a typed path) returns `EINVAL`.
+- **No renaming, no mangling**: unlike archive tools (7-Zip, WinRAR) that rewrite names (lossy, and breaks round-trip restore), the original restic path is never falsified. A file stored as `NUL.txt` in the repository is not exposed as `NUL (1).txt` or similar.
+- **Rationale**: this tool is read-only and intended for browsing/preview. Hiding a small number of pathological entries is far safer than presenting a mutated view of the backup. Users who need such files can still retrieve them with the regular `restic cat` / `restic restore` commands, which operate on the original POSIX names.
+
+**Lazy, per-directory filtering (no mount-time scan)**:
+
+- Filtering happens **only when a directory is actually listed**, as a side effect of the tree blob that `Readdir` loads for that directory anyway. There is no upfront walk of the snapshot tree.
+- Mount startup cost is identical to upstream `restic mount`: snapshot metadata + pack index only. Browsing a single file downloads only the tree blobs along that path — never the whole tree.
+
+**Warnings at browse time**:
+
+- Because the mount process keeps running in the user's terminal, warnings are emitted to **stderr at the moment a directory is listed** and a problem is detected — no mount-time scan required.
+- When `Readdir` hides entries with names invalid on Windows, it prints, e.g.:
+  ```
+  warning: hiding 1 entry in 'C:\mnt\restic\src' (invalid on Windows): 'NUL.txt'
+  ```
+- When a directory contains case-only collisions, it prints, e.g.:
+  ```
+  warning: case-only collision in 'C:\mnt\restic\src': 'config.go' is shadowed by 'Config.go'
+  ```
+- Warnings are emitted once per directory (deduplicated), so re-listing the same directory does not spam the console.
+
+**Case-only collisions** (e.g., `Config.go` and `config.go` in one directory):
+
+- NTFS guarantees that a directory cannot contain two names differing only in case, and WinFsp's case-insensitive name cache (`FSP_FUSE_CAP_CASE_INSENSITIVE`) would conflate them — listing both could make one name resolve to the other file, or confuse Explorer's enumeration.
+- Collision detection uses Go's `strings.EqualFold`, which performs Unicode case-folding (not just ASCII upper/lower), so names like `straße` / `STRASSE` or `İ` / `i` are correctly identified as colliding.
+- To preserve NTFS invariants, `Readdir` lists **only one** entry per collision group: deterministically, the first one in restic's tree order (restic stores names sorted).
+- `Lookup` of the shadowed name resolves to the listed entry — the same behavior as typing `config.go` on a real NTFS volume that contains `Config.go`.
+- This mirrors Git's working tree, where only one of the colliding files physically exists on the case-insensitive filesystem.
+
 ---
 
 ## Features
@@ -82,6 +119,7 @@ To stay consistent with the upstream `restic mount` command, this tool adopts th
 - **Read-Only Mount**: Optimized for browsing backup contents, previewing files in File Explorer, and restoring individual files.
 - **WinFsp + cgofuse**: High compatibility with Windows File Explorer powered by a stable virtual filesystem framework.
 - **Safe by default**: Refuses to mount over the local repository (deadlock prevention) and holds a shared repository lock while mounted, matching upstream `restic mount` semantics.
+- **Honest filenames**: POSIX names that are invalid on Windows are hidden from listings rather than renamed, so the backup is never presented in a mutated form (Git `core.protectNTFS`-style "refuse" strategy). Case-only collisions are resolved to a single entry to preserve NTFS invariants. All filtering is lazy — applied per directory as it is browsed, with no mount-time tree scan — and hidden entries / shadowed names are reported as warnings on the console at browse time.
 - **winget Support**: Automatically resolves the required WinFsp driver as a dependency.
 
 ---
