@@ -1,4 +1,4 @@
-# restic-mount
+# restic-mount for Windows
 
 A standalone CLI tool to natively mount [restic](https://github.com/restic/restic) repositories as virtual drives (or folders) on Windows.
 
