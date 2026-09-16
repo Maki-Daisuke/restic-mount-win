@@ -122,6 +122,7 @@ Flags:
       --stuck-request-timeout duration   duration after which to retry stuck requests (default 5m0s)
       --tls-client-cert file             path to a file containing PEM encoded TLS client certificate and private key (default: $RESTIC_TLS_CLIENT_CERT)
   -v, --verbose                          be verbose (specify multiple times or a level using --verbose=n, max level/times is 2)
+      --version                          version for restic-mount
 ```
 
 ## Building from Source

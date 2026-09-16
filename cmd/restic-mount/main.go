@@ -35,8 +35,9 @@ func main() {
 	var mountOpts MountWinOptions
 
 	rootCmd := &cobra.Command{
-		Use:   "restic-mount [flags] mountpoint",
-		Short: "Mount a restic repository as a Windows virtual drive or folder",
+		Use:     "restic-mount [flags] mountpoint",
+		Short:   "Mount a restic repository as a Windows virtual drive or folder",
+		Version: formatVersion(),
 		Long: `restic-mount mounts a restic repository read-only on Windows using WinFsp.
 
 You can specify a drive letter (e.g. X:) or a folder path (e.g. C:\mnt\restic).
@@ -120,6 +121,8 @@ To mount a specific snapshot directly at the root of the mountpoint, pass --snap
 			return nil
 		},
 	}
+
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
 	globalOptions.AddFlags(rootCmd.Flags())
 	rootCmd.Flags().StringVar(&mountOpts.SnapshotID, "snapshot", "", "mount only the specified snapshot ID directly at the root")
