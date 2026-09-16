@@ -1,0 +1,68 @@
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task: build
+
+  junction:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        powershell -Command "
+          if (!(Test-Path 'restic/cmd/restic-mount')) {
+            New-Item -ItemType Junction -Path 'restic/cmd/restic-mount' -Target ((Resolve-Path 'cmd/restic-mount').Path) | Out-Null
+          }
+        "
+
+  check-sync:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        powershell -Command '
+          $r = Get-Content restic/go.mod | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+          $o = Get-Content restic-mount.mod | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" -and $_ -notmatch "cgofuse" }
+          if (Compare-Object $r $o) {
+            Write-Error "restic-mount.mod is out of sync with restic/go.mod. Please run task sync-mod."
+            exit 1
+          }
+        '
+
+  build:
+    desc: Build restic-mount.exe for Windows
+    deps: [junction, check-sync]
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - powershell -Command "if (!(Test-Path bin)) { New-Item -ItemType Directory -Path bin | Out-Null }"
+      - go -C restic build -modfile=../restic-mount.mod -o ../bin/restic-mount.exe ./cmd/restic-mount
+    sources:
+      - cmd/restic-mount/**/*.go
+      - restic-mount.mod
+      - restic-mount.sum
+    generates:
+      - bin/restic-mount.exe
+
+  test:
+    desc: Run unit tests for restic-mount
+    deps: [junction]
+    cmds:
+      - go -C restic test -modfile=../restic-mount.mod -v ./cmd/restic-mount
+
+  clean:
+    desc: Clean build output directory
+    cmds:
+      - powershell -Command "if (Test-Path bin) { Remove-Item -Recurse -Force bin }"
+
+  sync-mod:
+    desc: Sync restic-mount.mod with restic/go.mod and re-add cgofuse dependency
+    cmds:
+      - |
+        powershell -Command "
+          Copy-Item restic/go.mod restic-mount.mod
+          Copy-Item restic/go.sum restic-mount.sum
+          Add-Content restic-mount.mod 'require github.com/winfsp/cgofuse v1.5.0'
+        "
+      - go -C restic get -modfile=../restic-mount.mod github.com/winfsp/cgofuse@v1.5.0

@@ -174,7 +174,9 @@ restic-mount -r D:\Backup\restic-repo --snapshot <SNAPSHOT_ID> X:
 
 ### Unmounting
 
-Press `Ctrl + C` in the running terminal, or eject the drive directly from File Explorer.
+Press `Ctrl + C` in the running terminal to safely unmount the drive and release the repository lock.
+
+*(Note: WinFsp exposes the volume as a local disk, so File Explorer's context menu does not provide an "Eject" option.)*
 
 ---
 

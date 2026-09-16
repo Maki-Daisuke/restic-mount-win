@@ -1,0 +1,25 @@
+# Binaries and build outputs
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and profiles
+*.test
+*.prof
+
+# Task runner cache
+/.task/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS generated files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
