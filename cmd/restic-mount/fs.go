@@ -123,6 +123,50 @@ func (fs *ResticFS) refreshSnapshots() error {
 		fs.snByName["latest"] = fs.snapshots[0]
 	}
 
+	for host := range fs.snByHost {
+		sort.Slice(fs.snByHost[host], func(i, j int) bool {
+			return fs.snByHost[host][i].Time.After(fs.snByHost[host][j].Time)
+		})
+	}
+	for tag := range fs.snByTag {
+		sort.Slice(fs.snByTag[tag], func(i, j int) bool {
+			return fs.snByTag[tag][i].Time.After(fs.snByTag[tag][j].Time)
+		})
+	}
+
+	return nil
+}
+
+func snapshotName(sn *data.Snapshot) string {
+	if sn == nil {
+		return ""
+	}
+	timeStr := sn.Time.Format("2006-01-02T15-04-05")
+	if sn.ID() != nil {
+		return fmt.Sprintf("%s_%s", timeStr, sn.ID().Str())
+	}
+	return timeStr
+}
+
+func findSnapshotInList(snList []*data.Snapshot, target string) *data.Snapshot {
+	if len(snList) == 0 {
+		return nil
+	}
+	if target == "latest" {
+		return snList[0]
+	}
+	for _, sn := range snList {
+		timeStr := sn.Time.Format("2006-01-02T15-04-05")
+		name := snapshotName(sn)
+		if target == name || target == timeStr {
+			return sn
+		}
+		if sn.ID() != nil {
+			if target == sn.ID().Str() || target == sn.ID().String() {
+				return sn
+			}
+		}
+	}
 	return nil
 }
 
@@ -270,7 +314,7 @@ func (fs *ResticFS) resolvePath(p string) (*data.Node, int) {
 		fs.mu.RLock()
 		snList := fs.snByHost[parts[1]]
 		fs.mu.RUnlock()
-		if snList == nil {
+		if len(snList) == 0 {
 			return nil, -fuse.ENOENT
 		}
 		if len(parts) == 2 {
@@ -280,14 +324,7 @@ func (fs *ResticFS) resolvePath(p string) (*data.Node, int) {
 				ModTime: fs.mountTime,
 			}, 0
 		}
-		// parts[2] is snapshot time/id
-		var sn *data.Snapshot
-		for _, s := range snList {
-			if s.ID().Str() == parts[2] || s.Time.Format("2006-01-02T15-04-05") == parts[2] {
-				sn = s
-				break
-			}
-		}
+		sn := findSnapshotInList(snList, parts[2])
 		if sn == nil {
 			return nil, -fuse.ENOENT
 		}
@@ -308,7 +345,7 @@ func (fs *ResticFS) resolvePath(p string) (*data.Node, int) {
 		fs.mu.RLock()
 		snList := fs.snByTag[parts[1]]
 		fs.mu.RUnlock()
-		if snList == nil {
+		if len(snList) == 0 {
 			return nil, -fuse.ENOENT
 		}
 		if len(parts) == 2 {
@@ -318,13 +355,7 @@ func (fs *ResticFS) resolvePath(p string) (*data.Node, int) {
 				ModTime: fs.mountTime,
 			}, 0
 		}
-		var sn *data.Snapshot
-		for _, s := range snList {
-			if s.ID().Str() == parts[2] || s.Time.Format("2006-01-02T15-04-05") == parts[2] {
-				sn = s
-				break
-			}
-		}
+		sn := findSnapshotInList(snList, parts[2])
 		if sn == nil {
 			return nil, -fuse.ENOENT
 		}
@@ -442,7 +473,17 @@ func (fs *ResticFS) Readdir(p string, fill func(name string, stat *fuse.Stat_t, 
 
 		switch top {
 		case "snapshots":
-			for name, sn := range fs.snByName {
+			if len(fs.snapshots) > 0 {
+				stLatest := fuse.Stat_t{
+					Mode: fuse.S_IFDIR | 0555,
+					Mtim: fuse.NewTimespec(fs.snapshots[0].Time),
+				}
+				if !fill("latest", &stLatest, 0) {
+					return 0
+				}
+			}
+			for _, sn := range fs.snapshots {
+				name := snapshotName(sn)
 				st := fuse.Stat_t{
 					Mode: fuse.S_IFDIR | 0555,
 					Mtim: fuse.NewTimespec(sn.Time),
@@ -494,6 +535,41 @@ func (fs *ResticFS) Readdir(p string, fill func(name string, stat *fuse.Stat_t, 
 			}
 			return 0
 		}
+	}
+
+	if len(parts) == 2 && (top == "hosts" || top == "tags") {
+		fs.mu.RLock()
+		var snList []*data.Snapshot
+		if top == "hosts" {
+			snList = fs.snByHost[parts[1]]
+		} else {
+			snList = fs.snByTag[parts[1]]
+		}
+		fs.mu.RUnlock()
+
+		if len(snList) == 0 {
+			return -fuse.ENOENT
+		}
+
+		stLatest := fuse.Stat_t{
+			Mode: fuse.S_IFDIR | 0555,
+			Mtim: fuse.NewTimespec(snList[0].Time),
+		}
+		if !fill("latest", &stLatest, 0) {
+			return 0
+		}
+
+		for _, sn := range snList {
+			name := snapshotName(sn)
+			st := fuse.Stat_t{
+				Mode: fuse.S_IFDIR | 0555,
+				Mtim: fuse.NewTimespec(sn.Time),
+			}
+			if !fill(name, &st, 0) {
+				break
+			}
+		}
+		return 0
 	}
 
 	// If inside a snapshot tree (e.g. /snapshots/<name>/... or /ids/<id>/...)
