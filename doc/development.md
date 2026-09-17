@@ -62,9 +62,10 @@ All common developer tasks are orchestrated via [Taskfile.yml](../Taskfile.yml).
 
 | Command | Description |
 | :--- | :--- |
-| `task` or `task build` | Builds `bin/restic-mount.exe` with `CGO_ENABLED=0`. Automatically sets up directory junction and validates module sync. |
+| `task` or `task build` | Builds `bin/restic-mount.exe` with `CGO_ENABLED=0` and `-trimpath`. Automatically sets up directory junction and validates module sync. |
+| `task package` | Builds and packages `dist/restic-mount-windows-amd64.zip` (and optional tagged zip) containing the executable, LICENSE, and README.md. |
 | `task test` | Runs all unit tests under `cmd/restic-mount/` using `-modfile=../restic-mount.mod`. |
-| `task clean` | Deletes the `bin/` directory and generated executables. |
+| `task clean` | Deletes the `bin/` and `dist/` directories and generated artifacts. |
 | `task sync-mod` | Synchronizes `restic-mount.mod` and `restic-mount.sum` from `restic/go.mod` and adds the `cgofuse` dependency. |
 
 ---

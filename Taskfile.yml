@@ -1,5 +1,8 @@
 version: "3"
 
+env:
+  CGO_ENABLED: "0"
+
 tasks:
   default:
     cmds:
@@ -37,7 +40,7 @@ tasks:
       CGO_ENABLED: "0"
     cmds:
       - powershell -Command "if (!(Test-Path bin)) { New-Item -ItemType Directory -Path bin | Out-Null }"
-      - go -C restic build -modfile=../restic-mount.mod -o ../bin/restic-mount.exe ./cmd/restic-mount
+      - go -C restic build -modfile=../restic-mount.mod -trimpath -o ../bin/restic-mount.exe ./cmd/restic-mount
     sources:
       - cmd/restic-mount/**/*.go
       - restic-mount.mod
@@ -45,16 +48,29 @@ tasks:
     generates:
       - bin/restic-mount.exe
 
+  package:
+    desc: Package release zip archive
+    deps: [build]
+    vars:
+      TAG: '{{.TAG | default "windows-amd64"}}'
+    cmds:
+      - powershell -Command "if (!(Test-Path dist)) { New-Item -ItemType Directory -Path dist | Out-Null }"
+      - powershell -Command "Compress-Archive -Path bin/restic-mount.exe, LICENSE, README.md -DestinationPath dist/restic-mount-{{.TAG}}.zip -Force"
+      - powershell -Command "if ('{{.TAG}}' -ne 'windows-amd64') { Copy-Item dist/restic-mount-{{.TAG}}.zip dist/restic-mount-windows-amd64.zip -Force }"
+
+
   test:
     desc: Run unit tests for restic-mount
     deps: [junction]
+    env:
+      CGO_ENABLED: "0"
     cmds:
       - go -C restic test -modfile=../restic-mount.mod -v ./cmd/restic-mount
 
   clean:
-    desc: Clean build output directory
+    desc: Clean build and package output directories
     cmds:
-      - powershell -Command "if (Test-Path bin) { Remove-Item -Recurse -Force bin }"
+      - powershell -Command "if (Test-Path bin) { Remove-Item -Recurse -Force bin }; if (Test-Path dist) { Remove-Item -Recurse -Force dist }"
 
   sync-mod:
     desc: Sync restic-mount.mod with restic/go.mod and re-add cgofuse dependency
