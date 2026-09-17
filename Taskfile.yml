@@ -54,8 +54,8 @@ tasks:
     vars:
       TAG: '{{.TAG | default "windows-amd64"}}'
     cmds:
-      - powershell -Command "if (!(Test-Path dist)) { New-Item -ItemType Directory -Path dist | Out-Null }"
-      - powershell -Command "Compress-Archive -Path bin/restic-mount.exe, LICENSE, README.md -DestinationPath dist/restic-mount-{{.TAG}}.zip -Force"
+      - powershell -Command "$ProgressPreference = 'SilentlyContinue'; if (!(Test-Path dist)) { New-Item -ItemType Directory -Path dist | Out-Null }"
+      - powershell -Command "$ProgressPreference = 'SilentlyContinue'; Compress-Archive -Path bin/restic-mount.exe, LICENSE, README.md -DestinationPath dist/restic-mount-{{.TAG}}.zip -Force"
       - powershell -Command "if ('{{.TAG}}' -ne 'windows-amd64') { Copy-Item dist/restic-mount-{{.TAG}}.zip dist/restic-mount-windows-amd64.zip -Force }"
 
 
