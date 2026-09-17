@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/fs"
 	"github.com/restic/restic/internal/global"
 	"github.com/restic/restic/internal/repository"
 	"github.com/restic/restic/internal/restic"
+	"golang.org/x/sys/windows"
 )
 
 const deadlockTail = "; refusing to mount to avoid deadlocking the FUSE server"
@@ -43,20 +45,75 @@ func CheckMountpointOverlap(repoPath, mountpoint string) error {
 	return nil
 }
 
-// resolvePath returns p as an absolute, symlink-resolved path. If EvalSymlinks
-// fails (e.g. the path does not fully exist, such as a new drive X:), it falls back
-// to the absolute form: overlap detection is best-effort and we'd rather refuse a clear
-// overlap than abort on an unrelated stat error.
+// resolvePath returns p as an absolute path with symlinks, junctions, and volume mount points resolved.
+// It uses Windows GetFinalPathNameByHandle to resolve reparse points (including junctions in Go 1.23+).
+// If final path resolution fails (e.g. the path does not fully exist, such as a new drive X:), it falls back
+// to filepath.EvalSymlinks and then to filepath.Abs: overlap detection is best-effort and we'd rather
+// refuse a clear overlap than abort on an unrelated stat error.
 func resolvePath(p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", fmt.Errorf("getting absolute path of %q: %w", p, err)
 	}
+
+	if final, err := getFinalPath(abs); err == nil && final != "" {
+		return final, nil
+	}
+
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return abs, nil
 	}
 	return resolved, nil
+}
+
+// getFinalPath returns the canonical target path for path using the Windows GetFinalPathNameByHandle API,
+// which correctly resolves Windows directory junctions and volume mount points even under Go 1.23+.
+func getFinalPath(path string) (string, error) {
+	pathPtr, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return "", fmt.Errorf("converting path to UTF16: %w", err)
+	}
+
+	// Open directory or file with desiredAccess=0 and FILE_FLAG_BACKUP_SEMANTICS
+	// to query path metadata without requiring read permissions on content.
+	h, err := windows.CreateFile(
+		pathPtr,
+		0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return "", fmt.Errorf("CreateFile %q: %w", path, err)
+	}
+	defer windows.CloseHandle(h)
+
+	var buf [windows.MAX_PATH]uint16
+	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	if err != nil {
+		return "", fmt.Errorf("GetFinalPathNameByHandle: %w", err)
+	}
+	if n >= uint32(len(buf)) {
+		longBuf := make([]uint16, n)
+		if _, err := windows.GetFinalPathNameByHandle(h, &longBuf[0], uint32(len(longBuf)), 0); err != nil {
+			return "", fmt.Errorf("GetFinalPathNameByHandle (long): %w", err)
+		}
+		return cleanWindowsPath(windows.UTF16ToString(longBuf)), nil
+	}
+	return cleanWindowsPath(windows.UTF16ToString(buf[:n])), nil
+}
+
+// cleanWindowsPath removes \\?\ or \\?\UNC\ prefixes and normalizes slashes.
+func cleanWindowsPath(p string) string {
+	if strings.HasPrefix(p, `\\?\UNC\`) {
+		p = `\\` + strings.TrimPrefix(p, `\\?\UNC\`)
+	} else if strings.HasPrefix(p, `\\?\`) {
+		p = strings.TrimPrefix(p, `\\?\`)
+	}
+	return filepath.Clean(p)
 }
 
 // OpenWithReadLock opens the restic repository and acquires a non-exclusive shared lock,
