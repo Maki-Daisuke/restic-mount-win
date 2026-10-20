@@ -8,7 +8,7 @@ import (
 var (
 	// Version represents the release version of restic-mount.
 	// Can be injected at build time via -ldflags "-X main.Version=x.y.z".
-	Version = "0.1.0"
+	Version = "0.1.1"
 
 	// ResticCommit represents the commit hash of the upstream restic submodule.
 	// Can be injected at build time via -ldflags "-X main.ResticCommit=...".
