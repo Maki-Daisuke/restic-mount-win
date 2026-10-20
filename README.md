@@ -156,7 +156,7 @@ For in-depth technical specifications, safety models, and design rationale, see 
 
 ## Development & Building
 
-Building requires **[Go](https://go.dev/) (1.25+)** and **[Task](https://taskfile.dev/)**. No C compiler or WinFsp SDK headers are needed (`CGO_ENABLED=0`).
+Building requires **[Go](https://go.dev/) (1.27+)** and **[Task](https://taskfile.dev/)**. No C compiler or WinFsp SDK headers are needed (`CGO_ENABLED=0`).
 
 ### 1. Tool Setup
 

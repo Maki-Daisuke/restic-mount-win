@@ -12,7 +12,7 @@ var (
 
 	// ResticCommit represents the commit hash of the upstream restic submodule.
 	// Can be injected at build time via -ldflags "-X main.ResticCommit=...".
-	ResticCommit = "ba802d42b"
+	ResticCommit = "dd09b6bd0"
 )
 
 // formatVersion returns a formatted string detailing the version, upstream restic commit, and Go runtime environment.

@@ -22,7 +22,7 @@ This runbook describes how to set up the development environment, build `restic-
 
 Before developing or building `restic-mount`, ensure the following tools are installed and available in your `PATH`:
 
-- **Go**: Version 1.25 or higher
+- **Go**: Version 1.27 or higher
 - **Task**: The [Task runner](https://taskfile.dev/) (`go-task` or `task`)
   ```powershell
   winget install Task.Task
