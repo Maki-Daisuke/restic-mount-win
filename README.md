@@ -30,7 +30,7 @@ The service restic-mount has been started.
 - **Safe by Default**:
   - Automatically refuses to mount inside or over local repositories to prevent kernel deadlocks (matching upstream GH #5234).
   - Acquires and holds a shared read-lock on the repository while mounted, supporting concurrent mounts while blocking destructive operations.
-- **Honest Filename Handling**: Adopts Git's `core.protectNTFS`-style "refuse" strategy. Invalid Windows characters/reserved names (`CON`, `NUL`, etc.) are safely hidden from Explorer rather than dangerously renamed/mangled, and case-only collisions are resolved cleanly without scanning the whole repository upfront.
+- **Honest Filename Handling**: Adopts Git's `core.protectNTFS`-style "refuse" strategy. Invalid Windows characters/reserved names (`CON`, `NUL`, etc.) are safely hidden from Explorer rather than dangerously renamed/mangled, and case-only collisions are resolved cleanly without scanning the whole repository upfront. See [Windows Filesystem & Name Projection](doc/windows-filesystem.md) for the full specification.
 - **One-Command Setup**: Managed via `winget`, which automatically resolves and installs the required WinFsp kernel driver.
 
 ---
@@ -100,110 +100,31 @@ _(Note: Because WinFsp registers the mount as a virtual disk, File Explorer does
 
 ---
 
-## Windows Filename Projection: The "Refuse" Strategy
+## Technical Details
 
-Restic repositories store POSIX paths from Linux/macOS that may be illegal on Windows (e.g. reserved device names like `CON`, `NUL`, `AUX`, `PRN`, `COM1`–`COM9`, `LPT1`–`LPT9`; forbidden characters `\ / : * ? " < > |`; trailing dots or spaces; names exceeding 255 characters).
+This tool makes several non-obvious engineering decisions, each documented in depth under [`doc/`](doc/) and organized according to Google's **Open Knowledge Format (OKF)** specification (see the [Documentation Catalog](doc/index.md)).
 
-Following Git's `core.protectNTFS` approach, this tool uses a **strict refusal strategy**:
+| Document | Covers |
+| :--- | :--- |
+| [Architecture & Design Rationale](doc/rationale.md) | Why upstream `restic mount` cannot support Windows, why this ships as a standalone binary, and how Go's `internal/` restriction is bypassed with directory junctions and `-modfile` — without touching upstream. |
+| [Windows Filesystem & Name Projection](doc/windows-filesystem.md) | The complete "refuse" strategy: reserved device names, forbidden characters, case-only collision resolution, and lazy browse-time evaluation. |
+| [Mount Safety & Locking](doc/safety.md) | Deadlock prevention via mountpoint/repository overlap detection, and the shared repository lock lifecycle. |
+| [Development & Build Guide](doc/development.md) | Environment setup, `Taskfile.yml` workflows, test coverage, and updating the upstream restic submodule. |
 
-- **Omit invalid names**: Directory listings (`Readdir`) omit entries whose names are illegal on Windows, printing a one-time console warning. The rest of the directory remains completely browsable.
-- **Lookup / Open**: Explicitly requesting an invalid path returns `EINVAL`.
-- **No falsified names**: We never rewrite/mangle names (e.g. turning `NUL.txt` into `NUL (1).txt`). Preserving data integrity is paramount; users can always retrieve problematic files using `restic restore` or `restic cat`.
-- **Zero startup penalty (Lazy evaluation)**: Filtering happens only when a directory is listed in Explorer. There is no upfront tree traversal.
-- **Case-only collisions**: For directories with multiple files differing only by case (e.g., `config.go` vs `Config.go`), only the first entry in sorted tree order is listed to protect NTFS invariants, and a console warning is emitted.
-
----
-
-## Architecture & Engineering Decisions
-
-<details>
-<summary>Click to expand technical design details</summary>
-
-### 1. Why does official `restic mount` lack Windows support?
-
-The upstream mount implementation relies on Linux/macOS FUSE (`anacrolix/fuse`). On Linux, exchanging byte streams with `/dev/fuse` works without CGO. Windows lacks native FUSE, requiring an external kernel driver like WinFsp. Merging WinFsp or CGO dependencies upstream conflicts with restic's goal of a lean, CGO-free, cross-compilable core binary.
-
-### 2. Standalone Binary with No upstream `go.mod` Pollution
-
-`restic-mount-win` is completely decoupled. By utilizing `winfsp/cgofuse` (which dynamically loads WinFsp DLLs without MinGW headers) and keeping it in a separate executable, we avoid polluting upstream `go.mod` with Windows-specific dependencies.
-
-### 3. Bypassing Go's `internal` Restriction via Junctions
-
-To reuse restic's robust repository, crypto, and pack-parsing logic without duplicating code, restic is tracked as a git submodule. At build time, a Windows **directory junction** links `cmd/restic-mount` into `restic/cmd/restic-mount`, allowing it to consume `restic/internal/...` packages natively:
-
-```text
-restic-mount-win/
-├── Taskfile.yml
-├── restic-mount.mod            # restic/go.mod + cgofuse require
-├── cmd/
-│   └── restic-mount/           # Project source code
-└── restic/                     # git submodule
-    └── cmd/
-        └── restic-mount  ======> Junction to ../../cmd/restic-mount
-```
-
-### 4. Zero Upstream Modification via `-modfile`
-
-To ensure clean submodule tracking, we never modify `restic/go.mod`. The build executes from inside `restic/` using Go 1.14+'s `-modfile=../restic-mount.mod`, which layers the `cgofuse` dependency over restic's module tree without mutating the submodule.
-
----
-
-For in-depth technical specifications, safety models, and design rationale, see the [doc/](doc/) directory, organized according to Google's **Open Knowledge Format (OKF)** specification (see the [Documentation Catalog](doc/index.md)).
-
-</details>
-
----
-
-## Development & Building
+### Quick Build Reference
 
 Building requires **[Go](https://go.dev/) (1.27+)** and **[Task](https://taskfile.dev/)**. No C compiler or WinFsp SDK headers are needed (`CGO_ENABLED=0`).
-
-### 1. Tool Setup
-
-```powershell
-winget install Task.Task
-```
-
-### 2. Clone the Repository
-
-Clone recursively to fetch submodules:
 
 ```powershell
 git clone --recursive https://github.com/Maki-Daisuke/restic-mount-win.git
 cd restic-mount-win
+
+task build   # -> bin/restic-mount.exe
+task test    # run unit tests
+task clean   # remove build artifacts
 ```
 
-### 3. Build & Test
-
-`Taskfile.yml` automatically verifies/creates the directory junction, checks that `restic-mount.mod` is in sync with `restic/go.mod`, disables CGO, and outputs the binary.
-
-```powershell
-# Build binary (outputs to bin/restic-mount.exe)
-task build
-
-# Run unit tests
-task test
-
-# Clean build artifacts
-task clean
-```
-
-Under the hood, the build runs (from inside `restic/`):
-
-```powershell
-$env:CGO_ENABLED = "0"
-go -C restic build -modfile=../restic-mount.mod -trimpath -o ../bin/restic-mount.exe ./cmd/restic-mount
-```
-
-### 4. Updating the restic submodule
-
-After bumping the submodule pointer, regenerate the alternate module file:
-
-```powershell
-task sync-mod   # copies restic/go.mod -> restic-mount.mod, re-adds cgofuse, runs go mod tidy
-```
-
-For detailed contributor workflows and development notes, see the [Development & Build Guide](doc/development.md).
+See the [Development & Build Guide](doc/development.md) for the full contributor workflow, including submodule updates and `task sync-mod`.
 
 ---
 
